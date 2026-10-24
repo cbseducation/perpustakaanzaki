@@ -1,30 +1,39 @@
+require('dotenv').config();
 const express = require('express');
 const admin = require('firebase-admin');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
 
-// Inisialisasi Firebase Admin dengan Environment Variable
+// Inisialisasi Firestore menggunakan Environment Variables
 if (!admin.apps.length) {
-  try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-  } catch (error) {
-    console.error('Firebase Admin Initialization Error:', error);
-  }
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      // Mengubah string \n menjadi newlines yang valid pada private key
+      privateKey: process.env.FIREBASE_PRIVATE_KEY
+        ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        : undefined,
+    }),
+  });
 }
 
 const db = admin.firestore();
 const booksCollection = db.collection('books');
 
-// Endpoint: Ambil Semua Buku
+// Serve static files dari folder public (untuk lokal dev)
+app.use(express.static(path.join(__dirname, '../public')));
+
+// === API ROUTES ===
+
+// 1. Ambil semua data buku
 app.get('/api/books', async (req, res) => {
   try {
     const snapshot = await booksCollection.get();
     const books = [];
-    snapshot.forEach(doc => {
+    snapshot.forEach((doc) => {
       books.push({ id: doc.id, ...doc.data() });
     });
     res.status(200).json(books);
@@ -33,19 +42,19 @@ app.get('/api/books', async (req, res) => {
   }
 });
 
-// Endpoint: Tambah Buku Baru
+// 2. Tambah buku baru
 app.post('/api/books', async (req, res) => {
   try {
     const { title, author, year } = req.body;
     if (!title || !author) {
-      return res.status(400).json({ error: 'Judul dan Penulis harus diisi!' });
+      return res.status(400).json({ error: 'Judul dan Penulis wajib diisi' });
     }
 
     const newBook = {
       title,
       author,
-      year: parseInt(year) || new Date().getFullYear(),
-      createdAt: new Date().toISOString()
+      year: Number(year) || new Date().getFullYear(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
     const docRef = await booksCollection.add(newBook);
@@ -55,7 +64,7 @@ app.post('/api/books', async (req, res) => {
   }
 });
 
-// Endpoint: Hapus Buku
+// 3. Hapus buku berdasarkan ID
 app.delete('/api/books/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -66,5 +75,13 @@ app.delete('/api/books/:id', async (req, res) => {
   }
 });
 
-// Export handler untuk Vercel Serverless Function
+// Port listener untuk pengujian lokal
+const PORT = process.env.PORT || 3000;
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server berjalan di http://localhost:${PORT}`);
+  });
+}
+
+// Export Express app untuk Vercel Serverless Function
 module.exports = app;
